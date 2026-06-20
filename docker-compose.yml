@@ -1,0 +1,12 @@
+services:
+  localstack:
+    image: localstack/localstack:3
+    container_name: excelstream-localstack
+    ports:
+      - "4566:4566"            # LocalStack 단일 엔드포인트
+    environment:
+      - SERVICES=s3
+      - DEBUG=0
+      - PERSISTENCE=0          # 재시작 시 초기화 (PoC라 무방)
+    volumes:
+      - "./localstack/init:/etc/localstack/init/ready.d"   # 기동 후 자동 실행 hook
