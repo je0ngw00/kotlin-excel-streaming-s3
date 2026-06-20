@@ -26,9 +26,16 @@ class S3MultipartSink(private val tm: S3TransferManager) {
                 .build(),
         )
 
-        body.outputStream().use { os ->
+        val os = body.outputStream()
+        try {
             writer(os)
+            os.close()                          // 정상 종료 신호 → 업로드 완료로 진행
+            upload.completionFuture().join()
+        } catch (e: Exception) {
+            // writer 가 중간에 실패하면 진행 중인 멀티파트 업로드를 취소해
+            // 잘린(truncated) 객체가 완성되거나 future 가 방치되는 것을 막는다.
+            upload.completionFuture().cancel(true)
+            throw e
         }
-        upload.completionFuture().join()
     }
 }

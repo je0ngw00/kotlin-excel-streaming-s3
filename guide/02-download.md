@@ -183,10 +183,16 @@ class S3MultipartSink(private val tm: S3TransferManager) {
         )
 
         // writer가 OutputStream에 쓰는 동안 SDK가 멀티파트로 빨아들임
-        body.outputStream().use { os ->
+        val os = body.outputStream()
+        try {
             writer(os)
+            os.close()                          // 정상 종료 신호 → 업로드 완료로 진행
+            upload.completionFuture().join()
+        } catch (e: Exception) {
+            // writer 실패 시 진행 중인 멀티파트 업로드를 취소(잘린 객체/방치된 future 방지)
+            upload.completionFuture().cancel(true)
+            throw e
         }
-        upload.completionFuture().join()
     }
 }
 ```
