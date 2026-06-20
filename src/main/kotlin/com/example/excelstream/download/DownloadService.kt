@@ -1,0 +1,19 @@
+package com.example.excelstream.download
+
+import org.springframework.stereotype.Service
+import java.util.UUID
+
+@Service
+class DownloadService(
+    private val store: ExportJobStore,
+    private val runner: ExportJobRunner,
+) {
+    fun startExport(): String {
+        val jobId = UUID.randomUUID().toString()
+        store.set(jobId, "RUNNING")
+        runner.run(jobId)
+        return jobId
+    }
+
+    fun status(jobId: String): String = store.get(jobId)
+}
