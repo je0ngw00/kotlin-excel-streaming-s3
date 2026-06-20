@@ -24,7 +24,11 @@ class S3ExcelStorage(private val s3: S3Client) {
     }
 
     fun downloadToTemp(key: String): Path {
+        // createTempFile 이 빈 파일을 먼저 만드는데, SDK 의 toFile 변환기는
+        // 대상 파일이 이미 있으면 실패한다. 유니크한 이름만 확보하고 즉시 지워
+        // SDK 가 새로 쓰게 한다.
         val tmp = Files.createTempFile("xlsx-", ".xlsx")
+        Files.delete(tmp)
         s3.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(), tmp)
         return tmp
     }
