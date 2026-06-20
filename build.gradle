@@ -43,6 +43,12 @@ dependencies {
     implementation 'software.amazon.awssdk.crt:aws-crt:0.30.9'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // 테스트: Kotlin 관용 모킹 + 실제 S3 통합용 컨테이너
+    testImplementation 'io.mockk:mockk:1.13.12'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:localstack'
+    // Gradle 9 + JUnit 5: 런처를 테스트 런타임에 명시해야 플랫폼이 로드됨
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') { useJUnitPlatform() }
