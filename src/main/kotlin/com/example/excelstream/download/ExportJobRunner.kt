@@ -2,6 +2,7 @@ package com.example.excelstream.download
 
 import com.example.excelstream.excel.S3MultipartSink
 import com.example.excelstream.excel.StreamingXlsxWriter
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
@@ -20,6 +21,8 @@ class ExportJobRunner(
     @Value("\${app.s3.bucket}")
     private lateinit var bucket: String
 
+    private val log = LoggerFactory.getLogger(ExportJobRunner::class.java)
+
     @Async
     fun run(jobId: String) {
         try {
@@ -28,7 +31,10 @@ class ExportJobRunner(
             sink.upload(key) { os -> writer.write(os, fetcher.rows()) }
             store.set(jobId, "DONE|${presignedUrl(key)}")
         } catch (e: Exception) {
-            store.set(jobId, "FAILED|${e.message}")
+            // 비동기 작업이라 스택트레이스를 잃지 않도록 반드시 로깅한다.
+            // 상태 문자열엔 null 대신 예외 클래스명이라도 남긴다.
+            log.error("export 실패 jobId={}", jobId, e)
+            store.set(jobId, "FAILED|${e.message ?: e.javaClass.simpleName}")
         }
     }
 
