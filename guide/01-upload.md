@@ -252,11 +252,8 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.services.s3.S3Client
-import software.amazon.awssdk.services.s3.model.GetObjectRequest
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import java.io.InputStream
-import java.nio.file.Files
-import java.nio.file.Path
 
 @Component
 class S3ExcelStorage(private val s3: S3Client) {
@@ -276,17 +273,10 @@ class S3ExcelStorage(private val s3: S3Client) {
             RequestBody.fromInputStream(input, contentLength),
         )
     }
-
-    /** S3 객체를 로컬 tmp 파일로 내려받는다 (SAX 읽기는 ZIP 랜덤액세스가 필요해 파일 경유) */
-    fun downloadToTemp(key: String): Path {
-        val tmp = Files.createTempFile("xlsx-", ".xlsx")
-        s3.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build(), tmp)
-        return tmp
-    }
 }
 ```
 
-> **정직한 트레이드오프 (글에 꼭 넣기)**: "왜 S3에서 받아 곧장 SAX로 안 읽고 tmp 파일을 거치나?" → xlsx는 ZIP이고 POI의 `OPCPackage.open`은 ZIP 중앙 디렉터리를 위해 **랜덤 액세스**가 필요하다. 순수 스트림(`OPCPackage.open(InputStream)`)도 되지만 내부적으로 전체를 메모리/임시파일에 버퍼링한다. 그래서 "S3 → tmp 파일 → SAX"가 가장 안정적이다. (Node의 unzipper도 결국 같은 제약)
+> **정직한 트레이드오프 (글에 꼭 넣기)**: xlsx는 ZIP이라 POI의 `OPCPackage.open`은 ZIP 중앙 디렉터리를 위해 **랜덤 액세스**가 필요하다 → SAX 읽기는 *파일 경로*가 가장 안정적이다(순수 스트림도 되지만 내부적으로 전체를 버퍼링한다). 그래서 파싱은 **로컬 임시파일**로 한다. 단, **이미 손에 있는 업로드 바이트를 로컬에 한 번만 떨구고**(`Files.copy`) 그걸로 파싱한다 — S3에 올린 걸 다시 내려받는 왕복은 낭비다. S3 업로드는 *보관용*으로만 둔다. (Node의 unzipper도 결국 같은 ZIP 제약을 받는다.)
 
 ---
 
@@ -306,6 +296,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 @Service
@@ -320,12 +311,13 @@ class UploadService(
     fun handle(file: MultipartFile): Long {
         val key = "uploads/${UUID.randomUUID()}.xlsx"
 
-        // 1) 업로드 스트림을 S3로 (서버 메모리엔 multipart 임계치 버퍼만)
-        storage.put(key, file.inputStream, file.size)
-
-        // 2) S3 → tmp 파일
-        val tmp = storage.downloadToTemp(key)
+        // 1) 업로드 바이트를 로컬 임시파일로 한 번만 받는다.
+        val tmp = Files.createTempFile("upload-", ".xlsx")
         try {
+            file.inputStream.use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
+            // 2) S3 엔 보관용으로 올린다(스트리밍 저장). 파싱은 S3 재다운로드 없이 방금 받은 로컬 파일로.
+            Files.newInputStream(tmp).use { storage.put(key, it, Files.size(tmp)) }
+
             // 3) SAX로 한 행씩 읽으며 1,000건마다 flush
             val buffer = ArrayList<Array<Any?>>(FLUSH_SIZE)
             var count = 0L

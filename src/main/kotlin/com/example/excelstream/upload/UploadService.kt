@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 @Service
@@ -25,10 +26,13 @@ class UploadService(
     @Transactional
     fun handle(file: MultipartFile): Long {
         val key = "uploads/${UUID.randomUUID()}.xlsx"
-        storage.put(key, file.inputStream, file.size)
-
-        val tmp = storage.downloadToTemp(key)
+        // 업로드 바이트를 로컬 임시파일로 한 번만 받는다.
+        val tmp = Files.createTempFile("upload-", ".xlsx")
         try {
+            file.inputStream.use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
+            // S3 에는 보관용으로 올린다(스트리밍 저장). 파싱은 S3 재다운로드 없이 방금 받은 로컬 파일로.
+            Files.newInputStream(tmp).use { storage.put(key, it, Files.size(tmp)) }
+
             val buffer = ArrayList<Array<Any?>>(FLUSH_SIZE)
             var count = 0L
             reader.read(tmp) { row ->
