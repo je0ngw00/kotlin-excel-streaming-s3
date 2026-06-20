@@ -54,6 +54,41 @@ class UploadServiceTest {
     }
 
     @Test
+    fun `소수 서식 금액도 파싱하고 완전히 빈 행은 건너뛴다`(@TempDir dir: Path) {
+        val tmp = dir.resolve("mixed.xlsx")
+        SXSSFWorkbook(100).use { wb ->
+            FileOutputStream(tmp.toFile()).use { out ->
+                val sheet = wb.createSheet("data")
+                val header = sheet.createRow(0)
+                listOf("id", "email", "name", "amount")
+                    .forEachIndexed { i, h -> header.createCell(i).setCellValue(h) }
+                // row1: 소수 서식 금액 1000.5 → 1000 으로 파싱
+                val r1 = sheet.createRow(1)
+                r1.createCell(0).setCellValue(1.0)
+                r1.createCell(1).setCellValue("a@example.com")
+                r1.createCell(2).setCellValue("alice")
+                r1.createCell(3).setCellValue(1000.5)
+                // row2: 완전히 빈 행 → 스킵
+                sheet.createRow(2)
+                wb.write(out)
+            }
+        }
+        every { storage.downloadToTemp(any()) } returns tmp
+
+        val captured = mutableListOf<List<Array<Any?>>>()
+        val file = MockMultipartFile("file", "x.xlsx", null, byteArrayOf(1, 2, 3))
+        val count = service.handle(file)
+
+        // 빈 행은 빠지고 1건만
+        assertThat(count).isEqualTo(1L)
+        verify { repo.insertBatch(capture(captured)) }
+        val row = captured.single().single()
+        assertThat(row[0]).isEqualTo("a@example.com")
+        assertThat(row[1]).isEqualTo("alice")
+        assertThat(row[2]).isEqualTo(1000L) // 1000.5 → 1000
+    }
+
+    @Test
     fun `읽기 후 임시 파일을 삭제한다`(@TempDir dir: Path) {
         val tmp = dir.resolve("data.xlsx")
         makeXlsx(tmp, 10)
