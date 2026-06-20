@@ -71,6 +71,34 @@ class StreamingXlsxReaderTest {
     }
 
     @Test
+    fun `여러 시트의 데이터를 모두 읽는다`(@TempDir dir: Path) {
+        val file = dir.resolve("multi.xlsx")
+        SXSSFWorkbook(100).use { wb ->
+            FileOutputStream(file.toFile()).use { out ->
+                listOf("s1" to "x@example.com", "s2" to "y@example.com")
+                    .forEach { (sheetName, email) ->
+                        val sheet = wb.createSheet(sheetName)
+                        val header = sheet.createRow(0)
+                        listOf("email", "name", "amount")
+                            .forEachIndexed { i, h -> header.createCell(i).setCellValue(h) }
+                        val r = sheet.createRow(1)
+                        r.createCell(0).setCellValue(email)
+                        r.createCell(1).setCellValue("n")
+                        r.createCell(2).setCellValue(10.0)
+                    }
+                wb.write(out)
+            }
+        }
+
+        val rows = mutableListOf<Map<String, String?>>()
+        reader.read(file) { rows.add(it) }
+
+        assertThat(rows).hasSize(2)
+        assertThat(rows.map { it["email"] })
+            .containsExactlyInAnyOrder("x@example.com", "y@example.com")
+    }
+
+    @Test
     fun `행 중간의 빈 셀은 null로 매핑된다`(@TempDir dir: Path) {
         val file = dir.resolve("blank.xlsx")
         SXSSFWorkbook(100).use { wb ->

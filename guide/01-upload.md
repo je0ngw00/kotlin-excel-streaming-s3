@@ -180,7 +180,7 @@ class StreamingXlsxReader {
         val styles = reader.stylesTable
 
         val sheets = reader.sheetsData as XSSFReader.SheetIterator
-        if (sheets.hasNext()) {                 // 첫 시트만 처리 (필요 시 루프)
+        while (sheets.hasNext()) {              // 모든 시트 처리 (시트마다 새 핸들러 = 헤더 재인식)
             sheets.next().use { sheetStream ->
                 val handler = RowHandler(onRow)
                 // ✅ deprecated 된 XMLReaderFactory.createXMLReader() 대신 POI 권장 헬퍼

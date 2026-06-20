@@ -14,7 +14,8 @@ import java.nio.file.Path
 class StreamingXlsxReader {
 
     /**
-     * 시트의 첫 행을 헤더로 보고, 각 데이터 행을 "헤더명(소문자) → 값" 맵으로 콜백한다.
+     * 워크북의 모든 시트를 순회하며, 각 시트의 첫 행을 헤더로 보고
+     * 데이터 행을 "헤더명(소문자) → 값" 맵으로 콜백한다.
      * 컬럼 순서나 불필요한 컬럼(id 등)에 의존하지 않으므로, 내보내기로 만든 파일을
      * 그대로 다시 업로드해도 컬럼이 밀리지 않는다.
      */
@@ -30,8 +31,9 @@ class StreamingXlsxReader {
         val styles = reader.stylesTable
 
         val sheets = reader.sheetsData as XSSFReader.SheetIterator
-        if (sheets.hasNext()) {
+        while (sheets.hasNext()) {
             sheets.next().use { sheetStream ->
+                // 시트마다 새 핸들러 → 각 시트의 첫 행을 그 시트의 헤더로 인식한다.
                 val handler = RowHandler(onRow)
                 val xmlReader = XMLHelper.newXMLReader()
                 xmlReader.contentHandler =
