@@ -162,18 +162,19 @@ import java.nio.file.Path
 
 /**
  * 대용량 xlsx를 SAX로 한 행씩 스트리밍 읽기.
- * onRow 콜백이 한 행(List<String?>)을 받는다. 어떤 시점에도 전체를 메모리에 올리지 않는다.
+ * 첫 행을 헤더로 보고, 각 데이터 행을 "헤더명(소문자) → 값" 맵으로 콜백한다.
+ * 컬럼 순서나 불필요한 컬럼(id 등)에 의존하지 않는다.
  */
 class StreamingXlsxReader {
 
     /** 파일 경로로부터 읽기 (S3에서 받은 tmp 파일을 넘긴다) */
-    fun read(xlsxPath: Path, onRow: (List<String?>) -> Unit) {
+    fun read(xlsxPath: Path, onRow: (Map<String, String?>) -> Unit) {
         OPCPackage.open(xlsxPath.toFile()).use { pkg ->
             readPackage(pkg, onRow)
         }
     }
 
-    private fun readPackage(pkg: OPCPackage, onRow: (List<String?>) -> Unit) {
+    private fun readPackage(pkg: OPCPackage, onRow: (Map<String, String?>) -> Unit) {
         val strings = ReadOnlySharedStringsTable(pkg)
         val reader = XSSFReader(pkg)
         val styles = reader.stylesTable
@@ -194,12 +195,14 @@ class StreamingXlsxReader {
     /**
      * 행 핸들러: 빈 셀이 있어도 열이 어긋나지 않게 cellReference로 컬럼 인덱스를 잡는다.
      * (POI SAX는 비어 있는 셀에는 cell() 콜백을 호출하지 않으므로, 단순 add 만 하면 컬럼이 밀린다.)
+     * 첫 행을 헤더로 기억해, 이후 행을 헤더명 → 값 맵으로 만든다.
      */
     private class RowHandler(
-        private val onRow: (List<String?>) -> Unit,
+        private val onRow: (Map<String, String?>) -> Unit,
     ) : SheetContentsHandler {
 
         private val current = ArrayList<String?>()
+        private var header: List<String>? = null
 
         override fun startRow(rowNum: Int) {
             current.clear()
@@ -213,8 +216,18 @@ class StreamingXlsxReader {
         }
 
         override fun endRow(rowNum: Int) {
-            if (rowNum == 0) return            // 헤더 skip (필요 시 검증에 사용)
-            onRow(current.toList())            // 스냅샷(방어적 복사) 전달 → 다음 행에서 덮어써도 안전
+            val row = current.toList()           // 스냅샷(방어적 복사) → 다음 행에서 덮어써도 안전
+            val h = header
+            if (h == null) {                     // 첫 행 = 헤더. 컬럼명을 정규화해 키로.
+                header = row.map { it?.trim()?.lowercase() ?: "" }
+                return
+            }
+            val map = LinkedHashMap<String, String?>(h.size)
+            for (i in h.indices) {
+                val key = h[i]
+                if (key.isNotEmpty()) map[key] = row.getOrNull(i)
+            }
+            onRow(map)
         }
 
         override fun headerFooter(text: String?, isHeader: Boolean, tagName: String?) {}
@@ -224,6 +237,7 @@ class StreamingXlsxReader {
 
 > **여기가 글의 하이라이트.** XSSF가 전체를 들고 있는 것과 달리, `RowHandler.current`는 항상 한 행짜리다. `endRow`에서 스냅샷을 넘기고 리스트를 비우므로 다음 행으로 덮어써도 GC 대상이 된다.
 > **정직한 함정 하나(글에 넣기):** POI SAX는 *빈 셀을 통째로 건너뛴다.* `cellReference`(A1, C5…)를 무시하고 값만 차곡차곡 담으면 중간에 빈 칸이 있는 행에서 열이 한 칸씩 밀린다. 위 코드는 `CellReference`로 열 위치를 복원해 이 문제를 막는다.
+> **헤더명 매핑:** 첫 행을 헤더로 기억해 `email`/`name`/`amount` 를 *이름*으로 찾는다. 덕분에 컬럼 순서가 바뀌거나 `id` 같은 불필요한 컬럼이 섞여도(내보내기 파일을 그대로 다시 업로드해도) 컬럼이 밀리지 않는다.
 
 ---
 
@@ -315,11 +329,11 @@ class UploadService(
             // 3) SAX로 한 행씩 읽으며 1,000건마다 flush
             val buffer = ArrayList<Array<Any?>>(FLUSH_SIZE)
             var count = 0L
-            reader.read(tmp) { cells ->
-                // cells: [id, email, name, amount] — 빈 셀 대비해 getOrNull 사용
-                val email = cells.getOrNull(1)?.trim()
-                val name = cells.getOrNull(2)?.trim()
-                val amount = cells.getOrNull(3)
+            reader.read(tmp) { row ->
+                // row: 헤더명 → 값 맵. 컬럼 순서/불필요 컬럼(id)에 의존하지 않는다.
+                val email = row["email"]?.trim()
+                val name = row["name"]?.trim()
+                val amount = row["amount"]
                 // 완전히 빈 행(셀이 없거나 모두 공백)은 건너뛴다.
                 if (email.isNullOrEmpty() && name.isNullOrEmpty() && amount.isNullOrBlank()) {
                     return@read

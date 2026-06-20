@@ -31,10 +31,10 @@ class UploadService(
         try {
             val buffer = ArrayList<Array<Any?>>(FLUSH_SIZE)
             var count = 0L
-            reader.read(tmp) { cells ->
-                val email = cells.getOrNull(1)?.trim()
-                val name = cells.getOrNull(2)?.trim()
-                val amount = cells.getOrNull(3)
+            reader.read(tmp) { row ->
+                val email = row["email"]?.trim()
+                val name = row["name"]?.trim()
+                val amount = row["amount"]
                 // 완전히 빈 행(셀이 없거나 모두 공백)은 건너뛴다.
                 if (email.isNullOrEmpty() && name.isNullOrEmpty() && amount.isNullOrBlank()) {
                     return@read
