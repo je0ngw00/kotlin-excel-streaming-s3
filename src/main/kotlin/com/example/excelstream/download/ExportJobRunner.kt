@@ -25,7 +25,7 @@ class ExportJobRunner(
         try {
             val key = "exports/$jobId.xlsx"
             val writer = StreamingXlsxWriter()
-            sink.upload(key) { os -> writer.write(os, 1000, fetcher) }
+            sink.upload(key) { os -> writer.write(os, fetcher.rows()) }
             store.set(jobId, "DONE|${presignedUrl(key)}")
         } catch (e: Exception) {
             store.set(jobId, "FAILED|${e.message}")

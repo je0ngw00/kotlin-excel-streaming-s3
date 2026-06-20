@@ -16,7 +16,7 @@ class MemberBatchRepositoryTest @Autowired constructor(
     @BeforeEach
     fun setUp() {
         jdbc.execute(
-            "CREATE TABLE members (" +
+            "CREATE TABLE IF NOT EXISTS members (" +
                 "id BIGINT AUTO_INCREMENT PRIMARY KEY, " +
                 "email VARCHAR(255), name VARCHAR(255), amount BIGINT)",
         )
