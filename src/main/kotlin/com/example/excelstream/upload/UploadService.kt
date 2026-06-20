@@ -5,6 +5,7 @@ import com.example.excelstream.excel.S3ExcelStorage
 import com.example.excelstream.excel.StreamingXlsxReader
 import com.example.excelstream.support.MemoryProbe
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.nio.file.Files
@@ -17,6 +18,11 @@ class UploadService(
 ) {
     private val reader = StreamingXlsxReader()
 
+    /**
+     * 한 번의 업로드를 하나의 트랜잭션으로 처리한다. 중간 배치가 이미 flush 됐더라도
+     * 어떤 행에서든 실패하면 전체가 롤백되어 부분 적재(데이터 오염)를 막는다.
+     */
+    @Transactional
     fun handle(file: MultipartFile): Long {
         val key = "uploads/${UUID.randomUUID()}.xlsx"
         storage.put(key, file.inputStream, file.size)

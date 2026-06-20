@@ -288,6 +288,7 @@ import com.example.excelstream.excel.S3ExcelStorage
 import com.example.excelstream.excel.StreamingXlsxReader
 import com.example.excelstream.support.MemoryProbe
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
 import java.math.BigDecimal
 import java.nio.file.Files
@@ -300,6 +301,8 @@ class UploadService(
 ) {
     private val reader = StreamingXlsxReader()
 
+    // 업로드 1건을 하나의 트랜잭션으로: 중간 배치가 flush 됐어도 실패 시 전체 롤백.
+    @Transactional
     fun handle(file: MultipartFile): Long {
         val key = "uploads/${UUID.randomUUID()}.xlsx"
 
