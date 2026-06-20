@@ -1,0 +1,63 @@
+plugins {
+    id 'org.springframework.boot' version '3.3.2'
+    id 'io.spring.dependency-management' version '1.1.6'
+    id 'org.jetbrains.kotlin.jvm' version '1.9.25'
+    id 'org.jetbrains.kotlin.plugin.spring' version '1.9.25'   // @Configuration/@Service 등 all-open
+    id 'org.jetbrains.kotlin.plugin.jpa' version '1.9.25'      // @Entity no-arg 생성자
+}
+
+group = 'com.example'
+version = '0.0.1'
+
+kotlin {
+    jvmToolchain(17)
+    compilerOptions {
+        freeCompilerArgs.add('-Xjsr305=strict')   // Spring nullability 애너테이션 엄격 적용
+    }
+}
+
+repositories { mavenCentral() }
+
+ext {
+    awsSdkVersion = '2.27.21'
+    poiVersion = '5.3.0'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin'
+    implementation 'org.jetbrains.kotlin:kotlin-reflect'
+    runtimeOnly 'com.h2database:h2'
+
+    // Apache POI: 읽기(XSSFReader+SAX) / 쓰기(SXSSF)
+    implementation "org.apache.poi:poi:${poiVersion}"
+    implementation "org.apache.poi:poi-ooxml:${poiVersion}"
+
+    // AWS SDK v2: S3 + Transfer Manager(멀티파트/스트리밍)
+    implementation platform("software.amazon.awssdk:bom:${awsSdkVersion}")
+    implementation 'software.amazon.awssdk:s3'
+    implementation 'software.amazon.awssdk:s3-transfer-manager'
+    // aws-crt 는 S3 BOM 관리 대상이 아니라 버전을 직접 지정해야 한다.
+    // SDK 2.27.21 이 정렬(테스트)한 awscrt 버전(0.30.9)에 맞춘다 — 임의 상향 핀 고정 회피.
+    implementation 'software.amazon.awssdk.crt:aws-crt:0.30.9'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') { useJUnitPlatform() }
+
+// 메모리 비교 관찰용: 힙을 일부러 작게 잡아 XSSF가 빨리 터지는 걸 보여줄 수 있음
+tasks.named('bootRun') {
+    jvmArgs = ['-Xmx512m', '-XX:+HeapDumpOnOutOfMemoryError']
+}
+
+// 테스트용 대용량 엑셀 생성기 실행 (application 플러그인 없이 main 실행)
+//   ./gradlew generateSample --args="100000 /tmp/sample-100k.xlsx"
+//   Kotlin top-level main 이 들어있는 SampleExcelGenerator.kt → 컴파일 클래스명은 SampleExcelGeneratorKt
+tasks.register('generateSample', JavaExec) {
+    group = 'application'
+    description = '테스트용 대용량 xlsx 생성'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.excelstream.sample.SampleExcelGeneratorKt'
+}

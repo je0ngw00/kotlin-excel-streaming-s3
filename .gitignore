@@ -1,0 +1,14 @@
+# Build
+build/
+.gradle/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+# Claude / superpowers 작업 산출물
+.claude/
+docs/superpowers/
