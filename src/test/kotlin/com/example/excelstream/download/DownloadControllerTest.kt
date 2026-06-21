@@ -54,6 +54,12 @@ class DownloadControllerTest {
     }
 
     @Test
+    fun `POST export 지원하지 않는 format 은 400 을 반환한다`() {
+        mockMvc.perform(post("/export").param("format", "pdf"))
+            .andExpect(status().isBadRequest)
+    }
+
+    @Test
     fun `GET export jobId 는 상태 문자열을 반환한다`() {
         every { service.status("job-1") } returns "DONE|http://x"
 
