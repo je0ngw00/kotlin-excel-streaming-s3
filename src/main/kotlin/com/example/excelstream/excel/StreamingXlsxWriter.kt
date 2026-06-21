@@ -2,8 +2,10 @@ package com.example.excelstream.excel
 
 import com.example.excelstream.support.MemoryProbe
 import org.apache.poi.xssf.streaming.SXSSFWorkbook
+import org.springframework.stereotype.Component
 import java.io.OutputStream
 
+@Component
 class StreamingXlsxWriter {
 
     /**

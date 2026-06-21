@@ -20,6 +20,7 @@ class ExportJobRunner(
     private val presigner: S3Presigner,
     private val store: ExportJobStore,
     private val csvWriter: StreamingCsvWriter,
+    private val xlsxWriter: StreamingXlsxWriter,
 ) {
     @Value("\${app.s3.bucket}")
     private lateinit var bucket: String
@@ -31,7 +32,7 @@ class ExportJobRunner(
         try {
             val key = "exports/$jobId.${format.ext}"
             val writeRows: (OutputStream) -> Unit = when (format) {
-                ExportFormat.XLSX -> { os -> StreamingXlsxWriter().write(os, fetcher.rows()) }
+                ExportFormat.XLSX -> { os -> xlsxWriter.write(os, fetcher.rows()) }
                 ExportFormat.CSV -> { os -> csvWriter.write(os, fetcher.rows()) }
             }
             sink.upload(key, writeRows)

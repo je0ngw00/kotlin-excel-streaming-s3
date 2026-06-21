@@ -2,6 +2,7 @@ package com.example.excelstream.download
 
 import com.example.excelstream.excel.S3MultipartSink
 import com.example.excelstream.excel.StreamingCsvWriter
+import com.example.excelstream.excel.StreamingXlsxWriter
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
@@ -24,7 +25,8 @@ class ExportJobRunnerTest {
     private val presigner = mockk<S3Presigner>()
     private val store = mockk<ExportJobStore>(relaxed = true)
     private val csvWriter = mockk<StreamingCsvWriter>(relaxed = true)
-    private val runner = ExportJobRunner(fetcher, sink, presigner, store, csvWriter).also {
+    private val xlsxWriter = mockk<StreamingXlsxWriter>(relaxed = true)
+    private val runner = ExportJobRunner(fetcher, sink, presigner, store, csvWriter, xlsxWriter).also {
         ReflectionTestUtils.setField(it, "bucket", "excel-bucket")
     }
 
