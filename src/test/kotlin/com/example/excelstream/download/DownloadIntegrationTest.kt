@@ -1,22 +1,14 @@
 package com.example.excelstream.download
 
-import com.example.excelstream.download.ExportStatus
 import com.example.excelstream.excel.StreamingCsvWriter
 import com.example.excelstream.excel.StreamingXlsxReader
+import com.example.excelstream.support.LocalStackTestBase
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.test.context.DynamicPropertyRegistry
-import org.springframework.test.context.DynamicPropertySource
-import org.testcontainers.containers.localstack.LocalStackContainer
-import org.testcontainers.containers.localstack.LocalStackContainer.Service
-import org.testcontainers.junit.jupiter.Container
-import org.testcontainers.junit.jupiter.Testcontainers
-import org.testcontainers.utility.DockerImageName
 import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.net.http.HttpClient
@@ -25,36 +17,12 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 
 @SpringBootTest
-@Testcontainers
 class DownloadIntegrationTest @Autowired constructor(
     private val service: DownloadService,
     private val fetcher: MemberPageFetcher,
     private val csvWriter: StreamingCsvWriter,
     private val jdbc: JdbcTemplate,
-) {
-    companion object {
-        @Container
-        @JvmStatic
-        val localstack: LocalStackContainer =
-            LocalStackContainer(DockerImageName.parse("localstack/localstack:3"))
-                .withServices(Service.S3)
-
-        @JvmStatic
-        @BeforeAll
-        fun createBucket() {
-            localstack.execInContainer("awslocal", "s3", "mb", "s3://excel-bucket")
-        }
-
-        @JvmStatic
-        @DynamicPropertySource
-        fun s3Props(registry: DynamicPropertyRegistry) {
-            registry.add("app.s3.endpoint") { localstack.getEndpointOverride(Service.S3).toString() }
-            registry.add("app.s3.region") { localstack.region }
-            registry.add("app.s3.access-key") { localstack.accessKey }
-            registry.add("app.s3.secret-key") { localstack.secretKey }
-            registry.add("app.s3.bucket") { "excel-bucket" }
-        }
-    }
+) : LocalStackTestBase() {
 
     @BeforeEach
     fun seed() {
