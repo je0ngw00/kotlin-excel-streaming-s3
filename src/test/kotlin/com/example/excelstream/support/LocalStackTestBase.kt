@@ -20,7 +20,9 @@ abstract class LocalStackTestBase {
         @JvmStatic
         @BeforeAll
         fun createBucket() {
-            localstack.execInContainer("awslocal", "s3", "mb", "s3://excel-bucket")
+            // 컨테이너는 JVM 당 한 번만 뜨지만 @BeforeAll 은 서브클래스마다 호출된다.
+            // 두 번째 호출은 이미 있는 버킷이라 BucketAlreadyOwnedByYou 가 날 수 있어 무시한다.
+            runCatching { localstack.execInContainer("awslocal", "s3", "mb", "s3://excel-bucket") }
         }
 
         @JvmStatic
