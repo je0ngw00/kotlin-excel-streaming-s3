@@ -43,10 +43,29 @@ docker compose up -d
 # 4. 업로드
 curl -F "file=@/tmp/sample-100k.xlsx" http://localhost:8080/upload   # → inserted=100000
 
-# 5. 다운로드(내보내기) 잡 시작 → 상태 폴링
+# 5. 다운로드(내보내기)
+# 5-1. 비동기 내보내기(xlsx 또는 CSV) — S3 업로드 + presigned URL
 curl -X POST http://localhost:8080/export                            # → {jobId}
 curl http://localhost:8080/export/{jobId}                            # → DONE|{presigned-url}
+
+# 5-2. 동기 스트리밍 CSV 다운로드 — 응답으로 실시간 스트림
+curl http://localhost:8080/export.csv > /tmp/exported.csv
 ```
+
+## 내보내기 엔드포인트
+
+포맷(xlsx/CSV)과 전달 전략(동기 스트리밍 / 비동기+S3)은 직교한다.
+CSV는 가벼워 두 전략 모두를 제공한다.
+
+| 엔드포인트 | 메서드 | 설명 |
+|-----------|--------|------|
+| `/export` | POST | 비동기 내보내기. 폴링으로 상태 확인. 포맷: `?format=xlsx\|csv` (기본값 xlsx). S3에 업로드 후 presigned URL 반환. |
+| `/export/{jobId}` | GET | 비동기 작업 상태 폴링. `RUNNING` → `DONE\|<presignedUrl>` 또는 `FAILED\|<msg>` |
+| `/export.csv` | GET | 동기 스트리밍 CSV 다운로드. 응답으로 한 줄씩 흘려보냄(서버 디스크/메모리 평탄). |
+
+**비동기 vs. 동기:**
+- **비동기** (`POST /export`): 대용량 xlsx에 적합. S3로 오프로드. 클라이언트는 폴링으로 완료 대기.
+- **동기** (`GET /export.csv`): 가벼운 CSV용. 스트림으로 즉시 응답. S3 거치지 않음.
 
 ## 테스트
 
@@ -54,8 +73,17 @@ curl http://localhost:8080/export/{jobId}                            # → DONE|
 ./gradlew test
 ```
 
+**테스트 구성:**
+- **업로드 테스트:**
+  - 단위: `StreamingXlsxReader`, `S3ExcelStorage` 라운드트립
+  - 통합: `UploadIntegrationTest` (Testcontainers LocalStack)
+- **다운로드 테스트:**
+  - 단위: CSV/XLSX 작성자(writer) 라운드트립, `ExportJobRunner`·`DownloadService` MockK
+  - 통합: `DownloadController` WebMvc, Testcontainers LocalStack 라운드트립
+
+**실행 환경:**
 - 단위/슬라이스 테스트는 Docker 없이 동작한다.
-- `UploadIntegrationTest`는 Testcontainers로 실제 LocalStack 컨테이너를 띄우므로 **Docker 데몬이 필요**하다.
+- `UploadIntegrationTest`, `DownloadIntegrationTest` 등은 Testcontainers로 실제 LocalStack 컨테이너를 띄우므로 **Docker 데몬이 필요**하다.
 
 ## 디렉터리 구조
 

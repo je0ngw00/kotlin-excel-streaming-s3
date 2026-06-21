@@ -50,17 +50,13 @@ import org.apache.poi.xssf.streaming.SXSSFWorkbook
 import java.io.OutputStream
 
 /**
- * DB를 페이징으로 조금씩 공급받아(PageFetcher) SXSSF로 큰 엑셀을 쓴다.
- * out 으로 응답 스트림이든 S3 멀티파트 스트림이든 넘길 수 있다.
+ * 행 시퀀스를 공급받아 SXSSF로 큰 엑셀을 쓴다.
+ * 시퀀스는 지연 평가되므로 호출자가 DB 키셋 페이징으로 조금씩 공급해도 전체를 메모리에 올리지 않는다.
+ * out 으로 응답 스트림이든 S3 멀티파트 스트림이든 넘길 수 있다. 각 행은 [email, name, amount].
  */
 class StreamingXlsxWriter {
 
-    /** 한 페이지(예: 1,000행)를 공급하는 콜백. 더 없으면 빈 리스트. */
-    fun interface PageFetcher {
-        fun fetch(pageNumber: Int, pageSize: Int): List<Array<Any?>>
-    }
-
-    fun write(out: OutputStream, pageSize: Int, fetcher: PageFetcher) {
+    fun write(out: OutputStream, rows: Sequence<Array<Any?>>) {
         // 윈도우 100행만 메모리, 나머지 디스크 flush.
         // use {} 의 close() 가 디스크 임시파일까지 정리한다 (POI 5.x 의 dispose() 는 deprecated).
         SXSSFWorkbook(100).use { wb ->
@@ -73,56 +69,70 @@ class StreamingXlsxWriter {
             header.createCell(1).setCellValue("name")
             header.createCell(2).setCellValue("amount")
 
-            var page = 0
-            while (true) {
-                val rows = fetcher.fetch(page, pageSize)   // DB에서 조금씩
-                if (rows.isEmpty()) break
-                for (data in rows) {
-                    val r = sheet.createRow(rownum++)
-                    r.createCell(0).setCellValue(data[0] as String?)
-                    r.createCell(1).setCellValue(data[1] as String?)
-                    r.createCell(2).setCellValue((data[2] as Number).toDouble())
+            for (data in rows) {
+                val r = sheet.createRow(rownum++)
+                r.createCell(0).setCellValue(data[0] as String?)
+                r.createCell(1).setCellValue(data[1] as String?)
+                r.createCell(2).setCellValue((data[2] as Number).toDouble())
+                if (rownum % LOG_EVERY == 0) {
+                    MemoryProbe.log("download-write", rownum.toLong())  // 평탄해야 성공
                 }
-                MemoryProbe.log("download-write", rownum.toLong())  // 평탄해야 성공
-                page++
             }
             wb.write(out)
             // 임시파일 정리는 use {} 의 close() 가 담당 (명시적 dispose() 는 deprecated)
         }
     }
+
+    companion object {
+        private const val LOG_EVERY = 1000
+    }
 }
 ```
 
-> 메모리는 항상 윈도우 100행 + 현재 페이지 1,000행뿐. 10만 행이어도 평탄.
+> 메모리는 항상 윈도우 100행 + 키셋 한 페이지뿐. 10만 행이어도 평탄.
 > **여기까지가 "메모리 문제"의 완전한 해결.** S3는 아직 안 나왔다.
 
 ---
 
-## 3. DB를 조금씩 읽기 (페이징 PageFetcher)
+## 3. DB를 조금씩 읽기 (키셋 페이징)
 
 `src/main/kotlin/com/example/excelstream/download/MemberPageFetcher.kt`:
 
 ```kotlin
 package com.example.excelstream.download
 
-import com.example.excelstream.excel.StreamingXlsxWriter.PageFetcher
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 
 @Component
-class MemberPageFetcher(private val jdbc: JdbcTemplate) : PageFetcher {
+class MemberPageFetcher(private val jdbc: JdbcTemplate) {
 
-    override fun fetch(pageNumber: Int, pageSize: Int): List<Array<Any?>> {
-        return jdbc.query(
-            "SELECT email, name, amount FROM members ORDER BY id LIMIT ? OFFSET ?",
-            { rs, _ -> arrayOf<Any?>(rs.getString(1), rs.getString(2), rs.getLong(3)) },
-            pageSize, pageNumber.toLong() * pageSize,
-        )
+    /**
+     * 키셋(seek) 페이징으로 전체 멤버를 지연 시퀀스로 공급한다.
+     * `WHERE id > ?` + 인덱스 정렬이라 페이지마다 O(pageSize) 범위 스캔으로 끝나,
+     * OFFSET 방식(뒤로 갈수록 O(n))의 비용을 피한다. 각 행은 [email, name, amount].
+     */
+    fun rows(pageSize: Int = 1000): Sequence<Array<Any?>> = sequence {
+        var afterId = 0L
+        while (true) {
+            val page = jdbc.query(
+                "SELECT id, email, name, amount FROM members WHERE id > ? ORDER BY id LIMIT ?",
+                { rs, _ ->
+                    rs.getLong(1) to arrayOf<Any?>(rs.getString(2), rs.getString(3), rs.getLong(4))
+                },
+                afterId, pageSize,
+            )
+            if (page.isEmpty()) break
+            for ((id, row) in page) {
+                afterId = id
+                yield(row)
+            }
+        }
     }
 }
 ```
 
-> 실무 팁(글에 각주): OFFSET은 뒤로 갈수록 느려진다. 진짜 대용량은 **키셋 페이지네이션**(`WHERE id > ? ORDER BY id LIMIT ?`)이나 **JDBC ResultSet 커서**(fetchSize 설정 + 스트리밍)가 낫다. PoC는 OFFSET으로 단순화.
+> 실무 팁(글에 각주): 위 코드는 **키셋(seek) 페이지네이션**(`WHERE id > ? ORDER BY id LIMIT ?`)이다. OFFSET 방식은 뒤로 갈수록 앞 행을 전부 스캔/폐기해 느려지므로(페이지가 뒤로 갈수록 O(n)) 대용량 내보내기에선 키셋이 안전하다. 더 끌어올리려면 **JDBC ResultSet 커서**(fetchSize 설정 + 스트리밍)도 선택지다.
 
 ---
 
@@ -173,10 +183,16 @@ class S3MultipartSink(private val tm: S3TransferManager) {
         )
 
         // writer가 OutputStream에 쓰는 동안 SDK가 멀티파트로 빨아들임
-        body.outputStream().use { os ->
+        val os = body.outputStream()
+        try {
             writer(os)
+            os.close()                          // 정상 종료 신호 → 업로드 완료로 진행
+            upload.completionFuture().join()
+        } catch (e: Exception) {
+            // writer 실패 시 진행 중인 멀티파트 업로드를 취소(잘린 객체/방치된 future 방지)
+            upload.completionFuture().cancel(true)
+            throw e
         }
-        upload.completionFuture().join()
     }
 }
 ```
@@ -219,6 +235,7 @@ package com.example.excelstream.download
 
 import com.example.excelstream.excel.S3MultipartSink
 import com.example.excelstream.excel.StreamingXlsxWriter
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
@@ -237,15 +254,19 @@ class ExportJobRunner(
     @Value("\${app.s3.bucket}")
     private lateinit var bucket: String
 
+    private val log = LoggerFactory.getLogger(ExportJobRunner::class.java)
+
     @Async   // ★ DownloadService(다른 빈)에서 호출 → 프록시 경유 → 진짜 비동기
     fun run(jobId: String) {
         try {
             val key = "exports/$jobId.xlsx"
             val writer = StreamingXlsxWriter()
-            sink.upload(key) { os -> writer.write(os, 1000, fetcher) }
+            sink.upload(key) { os -> writer.write(os, fetcher.rows()) }
             store.set(jobId, "DONE|${presignedUrl(key)}")
         } catch (e: Exception) {
-            store.set(jobId, "FAILED|${e.message}")
+            // 비동기라 스택트레이스를 잃지 않도록 로깅. 상태엔 null 대신 예외 클래스명이라도.
+            log.error("export 실패 jobId={}", jobId, e)
+            store.set(jobId, "FAILED|${e.message ?: e.javaClass.simpleName}")
         }
     }
 

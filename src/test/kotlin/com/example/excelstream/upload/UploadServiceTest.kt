@@ -2,11 +2,11 @@ package com.example.excelstream.upload
 
 import com.example.excelstream.domain.MemberBatchRepository
 import com.example.excelstream.excel.S3ExcelStorage
-import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import org.apache.poi.xssf.streaming.SXSSFWorkbook
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.mock.web.MockMultipartFile
@@ -20,9 +20,11 @@ class UploadServiceTest {
     private val repo = mockk<MemberBatchRepository>(relaxed = true)
     private val service = UploadService(storage, repo)
 
-    private fun makeXlsx(path: Path, dataRows: Int) {
+    /** id,email,name,amount 헤더 + dataRows 건의 표준 xlsx 바이트를 만든다. */
+    private fun xlsxBytes(dir: Path, dataRows: Int): ByteArray {
+        val f = dir.resolve("src-$dataRows.xlsx")
         SXSSFWorkbook(100).use { wb ->
-            FileOutputStream(path.toFile()).use { out ->
+            FileOutputStream(f.toFile()).use { out ->
                 val sheet = wb.createSheet("data")
                 val header = sheet.createRow(0)
                 listOf("id", "email", "name", "amount")
@@ -37,15 +39,13 @@ class UploadServiceTest {
                 wb.write(out)
             }
         }
+        return Files.readAllBytes(f)
     }
 
     @Test
     fun `1000건 경계로 flush 하고 잔여분도 flush 하며 총 건수를 반환한다`(@TempDir dir: Path) {
-        val tmp = dir.resolve("data.xlsx")
-        makeXlsx(tmp, 2500)
-        every { storage.downloadToTemp(any()) } returns tmp
+        val file = MockMultipartFile("file", "x.xlsx", null, xlsxBytes(dir, 2500))
 
-        val file = MockMultipartFile("file", "x.xlsx", null, byteArrayOf(1, 2, 3))
         val count = service.handle(file)
 
         assertThat(count).isEqualTo(2500L)
@@ -54,14 +54,60 @@ class UploadServiceTest {
     }
 
     @Test
-    fun `읽기 후 임시 파일을 삭제한다`(@TempDir dir: Path) {
-        val tmp = dir.resolve("data.xlsx")
-        makeXlsx(tmp, 10)
-        every { storage.downloadToTemp(any()) } returns tmp
+    fun `소수 서식 금액도 파싱하고 완전히 빈 행은 건너뛴다`(@TempDir dir: Path) {
+        val src = dir.resolve("mixed.xlsx")
+        SXSSFWorkbook(100).use { wb ->
+            FileOutputStream(src.toFile()).use { out ->
+                val sheet = wb.createSheet("data")
+                val header = sheet.createRow(0)
+                listOf("id", "email", "name", "amount")
+                    .forEachIndexed { i, h -> header.createCell(i).setCellValue(h) }
+                // row1: 소수 서식 금액 1000.5 → 1000 으로 파싱
+                val r1 = sheet.createRow(1)
+                r1.createCell(0).setCellValue(1.0)
+                r1.createCell(1).setCellValue("a@example.com")
+                r1.createCell(2).setCellValue("alice")
+                r1.createCell(3).setCellValue(1000.5)
+                // row2: 완전히 빈 행 → 스킵
+                sheet.createRow(2)
+                wb.write(out)
+            }
+        }
+        val file = MockMultipartFile("file", "x.xlsx", null, Files.readAllBytes(src))
 
-        val file = MockMultipartFile("file", "x.xlsx", null, byteArrayOf(1, 2, 3))
-        service.handle(file)
+        val captured = mutableListOf<List<Array<Any?>>>()
+        val count = service.handle(file)
 
-        assertThat(Files.exists(tmp)).isFalse()
+        // 빈 행은 빠지고 1건만
+        assertThat(count).isEqualTo(1L)
+        verify { repo.insertBatch(capture(captured)) }
+        val row = captured.single().single()
+        assertThat(row[0]).isEqualTo("a@example.com")
+        assertThat(row[1]).isEqualTo("alice")
+        assertThat(row[2]).isEqualTo(1000L) // 1000.5 → 1000
+    }
+
+    @Test
+    fun `파싱 실패 시 S3 에 객체를 올리지 않는다`(@TempDir dir: Path) {
+        val src = dir.resolve("bad.xlsx")
+        SXSSFWorkbook(100).use { wb ->
+            FileOutputStream(src.toFile()).use { out ->
+                val sheet = wb.createSheet("data")
+                val header = sheet.createRow(0)
+                listOf("id", "email", "name", "amount")
+                    .forEachIndexed { i, h -> header.createCell(i).setCellValue(h) }
+                val r1 = sheet.createRow(1)
+                r1.createCell(0).setCellValue(1.0)
+                r1.createCell(1).setCellValue("a@example.com")
+                r1.createCell(2).setCellValue("alice")
+                r1.createCell(3).setCellValue("not-a-number") // 파싱 실패 유발
+                wb.write(out)
+            }
+        }
+        val file = MockMultipartFile("file", "x.xlsx", null, Files.readAllBytes(src))
+
+        assertThatThrownBy { service.handle(file) }
+            .isInstanceOf(NumberFormatException::class.java)
+        verify(exactly = 0) { storage.put(any(), any(), any()) }
     }
 }

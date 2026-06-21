@@ -5,8 +5,11 @@ import com.example.excelstream.excel.S3ExcelStorage
 import com.example.excelstream.excel.StreamingXlsxReader
 import com.example.excelstream.support.MemoryProbe
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
+import java.math.BigDecimal
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 @Service
@@ -16,16 +19,28 @@ class UploadService(
 ) {
     private val reader = StreamingXlsxReader()
 
+    /**
+     * 한 번의 업로드를 하나의 트랜잭션으로 처리한다. 먼저 파싱·적재하고, 적재가 모두 성공한 뒤에야
+     * 원본 파일을 S3 에 보관용으로 올린다. 어느 행에서든 실패하면 DB 는 롤백되고 S3 에도 아무것도
+     * 남지 않아 부분 적재(데이터 오염)와 고아 객체를 모두 막는다.
+     */
+    @Transactional
     fun handle(file: MultipartFile): Long {
         val key = "uploads/${UUID.randomUUID()}.xlsx"
-        storage.put(key, file.inputStream, file.size)
-
-        val tmp = storage.downloadToTemp(key)
+        val tmp = Files.createTempFile("upload-", ".xlsx")
         try {
+            file.inputStream.use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
+
             val buffer = ArrayList<Array<Any?>>(FLUSH_SIZE)
             var count = 0L
-            reader.read(tmp) { cells ->
-                buffer.add(arrayOf(cells.getOrNull(1), cells.getOrNull(2), cells.getOrNull(3)?.toLong()))
+            reader.read(tmp) { row ->
+                val email = row["email"]?.trim()
+                val name = row["name"]?.trim()
+                val amount = row["amount"]
+                if (email.isNullOrEmpty() && name.isNullOrEmpty() && amount.isNullOrBlank()) {
+                    return@read
+                }
+                buffer.add(arrayOf(email, name, parseAmount(amount)))
                 if (buffer.size >= FLUSH_SIZE) {
                     repo.insertBatch(buffer)
                     count += buffer.size
@@ -38,10 +53,24 @@ class UploadService(
                 count += buffer.size
             }
             MemoryProbe.log("upload-done", count)
+
+            // 적재가 모두 성공한 파일만 보관용으로 S3 에 올린다(고아 객체 방지).
+            Files.newInputStream(tmp).use { storage.put(key, it, Files.size(tmp)) }
             return count
         } finally {
             Files.deleteIfExists(tmp)
         }
+    }
+
+    /**
+     * POI DataFormatter 가 돌려주는 표시 문자열을 Long 으로 변환한다.
+     * "1,000"(천단위), "100.0"(소수 서식), "1E+5"(지수 서식)까지 견고하게 처리한다.
+     * 값이 비어 있으면 null, 숫자로 해석 불가하면 예외를 던진다.
+     */
+    private fun parseAmount(raw: String?): Long? {
+        val s = raw?.trim()?.replace(",", "")
+        if (s.isNullOrEmpty()) return null
+        return BigDecimal(s).toLong()
     }
 
     companion object {

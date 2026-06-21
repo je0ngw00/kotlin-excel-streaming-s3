@@ -26,9 +26,16 @@ class S3MultipartSink(private val tm: S3TransferManager) {
                 .build(),
         )
 
-        body.outputStream().use { os ->
+        val os = body.outputStream()
+        try {
             writer(os)
+            os.close()                          // 정상 종료 신호 → 업로드 완료로 진행
+            upload.completionFuture().join()
+        } catch (e: Exception) {
+            // CancellableOutputStream.cancel() 이 진행 중인 멀티파트 업로드를 실제로 중단(abort)한다.
+            // completionFuture().cancel() 은 Java future 만 취소할 뿐 S3 AbortMultipartUpload 를 보내지 않는다.
+            os.cancel()
+            throw e
         }
-        upload.completionFuture().join()
     }
 }
