@@ -8,10 +8,10 @@ class DownloadService(
     private val store: ExportJobStore,
     private val runner: ExportJobRunner,
 ) {
-    fun startExport(): String {
+    fun startExport(format: ExportFormat = ExportFormat.XLSX): String {
         val jobId = UUID.randomUUID().toString()
         store.set(jobId, "RUNNING")
-        runner.run(jobId)
+        runner.run(jobId, format)
         return jobId
     }
 
