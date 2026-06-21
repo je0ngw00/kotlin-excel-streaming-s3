@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import org.apache.poi.xssf.streaming.SXSSFWorkbook
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.mock.web.MockMultipartFile
@@ -84,5 +85,29 @@ class UploadServiceTest {
         assertThat(row[0]).isEqualTo("a@example.com")
         assertThat(row[1]).isEqualTo("alice")
         assertThat(row[2]).isEqualTo(1000L) // 1000.5 → 1000
+    }
+
+    @Test
+    fun `파싱 실패 시 S3 에 객체를 올리지 않는다`(@TempDir dir: Path) {
+        val src = dir.resolve("bad.xlsx")
+        SXSSFWorkbook(100).use { wb ->
+            FileOutputStream(src.toFile()).use { out ->
+                val sheet = wb.createSheet("data")
+                val header = sheet.createRow(0)
+                listOf("id", "email", "name", "amount")
+                    .forEachIndexed { i, h -> header.createCell(i).setCellValue(h) }
+                val r1 = sheet.createRow(1)
+                r1.createCell(0).setCellValue(1.0)
+                r1.createCell(1).setCellValue("a@example.com")
+                r1.createCell(2).setCellValue("alice")
+                r1.createCell(3).setCellValue("not-a-number") // 파싱 실패 유발
+                wb.write(out)
+            }
+        }
+        val file = MockMultipartFile("file", "x.xlsx", null, Files.readAllBytes(src))
+
+        assertThatThrownBy { service.handle(file) }
+            .isInstanceOf(NumberFormatException::class.java)
+        verify(exactly = 0) { storage.put(any(), any(), any()) }
     }
 }

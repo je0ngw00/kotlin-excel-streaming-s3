@@ -20,18 +20,16 @@ class UploadService(
     private val reader = StreamingXlsxReader()
 
     /**
-     * 한 번의 업로드를 하나의 트랜잭션으로 처리한다. 중간 배치가 이미 flush 됐더라도
-     * 어떤 행에서든 실패하면 전체가 롤백되어 부분 적재(데이터 오염)를 막는다.
+     * 한 번의 업로드를 하나의 트랜잭션으로 처리한다. 먼저 파싱·적재하고, 적재가 모두 성공한 뒤에야
+     * 원본 파일을 S3 에 보관용으로 올린다. 어느 행에서든 실패하면 DB 는 롤백되고 S3 에도 아무것도
+     * 남지 않아 부분 적재(데이터 오염)와 고아 객체를 모두 막는다.
      */
     @Transactional
     fun handle(file: MultipartFile): Long {
         val key = "uploads/${UUID.randomUUID()}.xlsx"
-        // 업로드 바이트를 로컬 임시파일로 한 번만 받는다.
         val tmp = Files.createTempFile("upload-", ".xlsx")
         try {
             file.inputStream.use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
-            // S3 에는 보관용으로 올린다(스트리밍 저장). 파싱은 S3 재다운로드 없이 방금 받은 로컬 파일로.
-            Files.newInputStream(tmp).use { storage.put(key, it, Files.size(tmp)) }
 
             val buffer = ArrayList<Array<Any?>>(FLUSH_SIZE)
             var count = 0L
@@ -39,7 +37,6 @@ class UploadService(
                 val email = row["email"]?.trim()
                 val name = row["name"]?.trim()
                 val amount = row["amount"]
-                // 완전히 빈 행(셀이 없거나 모두 공백)은 건너뛴다.
                 if (email.isNullOrEmpty() && name.isNullOrEmpty() && amount.isNullOrBlank()) {
                     return@read
                 }
@@ -56,6 +53,9 @@ class UploadService(
                 count += buffer.size
             }
             MemoryProbe.log("upload-done", count)
+
+            // 적재가 모두 성공한 파일만 보관용으로 S3 에 올린다(고아 객체 방지).
+            Files.newInputStream(tmp).use { storage.put(key, it, Files.size(tmp)) }
             return count
         } finally {
             Files.deleteIfExists(tmp)
