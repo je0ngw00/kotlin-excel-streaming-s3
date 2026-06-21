@@ -52,4 +52,13 @@ class StreamingCsvWriterTest {
         val rows = sequenceOf<Array<Any?>>(arrayOf(null, null, null))
         assertThat(csv(rows)).isEqualTo("email,name,amount\n,,\n")
     }
+
+    @Test
+    fun `캐리지 리턴이 든 값도 따옴표로 감싼다`() {
+        val rows = sequenceOf<Array<Any?>>(arrayOf("a@example.com", "line1\rline2", 1L))
+        assertThat(csv(rows)).isEqualTo(
+            "email,name,amount\n" +
+                "a@example.com,\"line1\rline2\",1\n",
+        )
+    }
 }
