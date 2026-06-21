@@ -18,7 +18,8 @@ class MemberPageFetcher(private val jdbc: JdbcTemplate) {
             val page = jdbc.query(
                 "SELECT id, email, name, amount FROM members WHERE id > ? ORDER BY id LIMIT ?",
                 { rs, _ ->
-                    rs.getLong(1) to arrayOf<Any?>(rs.getString(2), rs.getString(3), rs.getLong(4))
+                    val amount: Long? = rs.getLong(4).let { if (rs.wasNull()) null else it }
+                    rs.getLong(1) to arrayOf<Any?>(rs.getString(2), rs.getString(3), amount)
                 },
                 afterId, pageSize,
             )

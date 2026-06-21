@@ -25,7 +25,7 @@ class StreamingXlsxWriter {
                 val r = sheet.createRow(rownum++)
                 r.createCell(0).setCellValue(data[0] as String?)
                 r.createCell(1).setCellValue(data[1] as String?)
-                r.createCell(2).setCellValue((data[2] as Number).toDouble())
+                (data[2] as Number?)?.let { r.createCell(2).setCellValue(it.toDouble()) }
                 if (rownum % LOG_EVERY == 0) {
                     MemoryProbe.log("download-write", rownum.toLong())
                 }
