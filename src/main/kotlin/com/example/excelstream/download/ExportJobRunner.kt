@@ -36,11 +36,11 @@ class ExportJobRunner(
                 ExportFormat.CSV -> { os -> csvWriter.write(os, fetcher.rows()) }
             }
             sink.upload(key, writeRows)
-            store.set(jobId, "DONE|${presignedUrl(key)}")
+            store.set(jobId, ExportStatus.done(presignedUrl(key)))
         } catch (e: Exception) {
             // 비동기 작업이라 스택트레이스를 잃지 않도록 반드시 로깅한다.
             log.error("export 실패 jobId={}", jobId, e)
-            store.set(jobId, "FAILED|${e.message ?: e.javaClass.simpleName}")
+            store.set(jobId, ExportStatus.failed(e.message ?: e.javaClass.simpleName))
         }
     }
 

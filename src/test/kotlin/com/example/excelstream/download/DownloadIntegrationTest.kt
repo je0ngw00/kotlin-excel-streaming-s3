@@ -1,5 +1,6 @@
 package com.example.excelstream.download
 
+import com.example.excelstream.download.ExportStatus
 import com.example.excelstream.excel.StreamingCsvWriter
 import com.example.excelstream.excel.StreamingXlsxReader
 import org.assertj.core.api.Assertions.assertThat
@@ -70,7 +71,7 @@ class DownloadIntegrationTest @Autowired constructor(
     private fun await(jobId: String): String {
         repeat(100) {
             val status = service.status(jobId)
-            if (status.startsWith("DONE|") || status.startsWith("FAILED|")) return status
+            if (ExportStatus.isDone(status) || ExportStatus.isFailed(status)) return status
             Thread.sleep(100)
         }
         error("export 가 시간 내 끝나지 않음 jobId=$jobId")
@@ -102,7 +103,7 @@ class DownloadIntegrationTest @Autowired constructor(
 
         val status = await(jobId)
         assertThat(status).startsWith("DONE|")
-        val url = status.removePrefix("DONE|")
+        val url = ExportStatus.urlOf(status)
 
         val tmp = Files.createTempFile("dl-", ".xlsx")
         Files.write(tmp, httpGet(url))
@@ -121,7 +122,7 @@ class DownloadIntegrationTest @Autowired constructor(
 
         val status = await(jobId)
         assertThat(status).startsWith("DONE|")
-        val url = status.removePrefix("DONE|")
+        val url = ExportStatus.urlOf(status)
 
         val body = String(httpGet(url), Charsets.UTF_8)
         assertThat(body.lines().first()).isEqualTo("email,name,amount")
