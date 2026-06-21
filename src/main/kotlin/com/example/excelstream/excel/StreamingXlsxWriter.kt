@@ -19,9 +19,7 @@ class StreamingXlsxWriter {
             var rownum = 0
 
             val header = sheet.createRow(rownum++)
-            header.createCell(0).setCellValue("email")
-            header.createCell(1).setCellValue("name")
-            header.createCell(2).setCellValue("amount")
+            MEMBER_EXPORT_HEADER.forEachIndexed { i, h -> header.createCell(i).setCellValue(h) }
 
             for (data in rows) {
                 val r = sheet.createRow(rownum++)

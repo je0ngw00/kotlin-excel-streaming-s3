@@ -13,7 +13,7 @@ class StreamingCsvWriter {
 
     fun write(out: OutputStream, rows: Sequence<Array<Any?>>) {
         val w = out.bufferedWriter(Charsets.UTF_8)
-        w.append(HEADER).append('\n')
+        w.append(header).append('\n')
         for (row in rows) {
             w.append(field(row.getOrNull(0)))
                 .append(',').append(field(row.getOrNull(1)))
@@ -34,6 +34,6 @@ class StreamingCsvWriter {
     }
 
     companion object {
-        private const val HEADER = "email,name,amount"
+        private val header = MEMBER_EXPORT_HEADER.joinToString(",")
     }
 }
