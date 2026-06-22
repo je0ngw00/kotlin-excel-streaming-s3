@@ -67,3 +67,15 @@ tasks.register('generateSample', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.example.excelstream.sample.SampleExcelGeneratorKt'
 }
+
+// 메모리 측정 하니스 — 힙 캡(-Pxmx)과 인자(mode rows [logEvery])를 받아 [MEM]/[RESULT] 로깅.
+//   ./gradlew measure -Pxmx=256m --args="xssf-read 200000 10000"
+//   모드: sax-read | xssf-read | sxssf-write | xssf-write
+tasks.register('measure', JavaExec) {
+    group = 'application'
+    description = '메모리 측정 하니스 (순수 파싱/생성, DB 미적재)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.excelstream.measure.MeasureKt'
+    def xmx = project.findProperty('xmx') ?: '512m'
+    jvmArgs = ["-Xmx${xmx}"]
+}
